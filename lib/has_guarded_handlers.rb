@@ -128,14 +128,16 @@ module HasGuardedHandlers
   # @option options [true, false] :broadcast Enables broadcast mode, where the return value or raising of handlers does not halt the handler chain. Defaults to false.
   # @option options [Proc] :exception_callback Allows handling exceptions when broadcast mode is available via a callback.
   def trigger_handler(type, event, options = {})
-    broadcast = options[:broadcast] || false
     return unless handler = handlers_of_type(type)
+    broadcast = options[:broadcast]
     called = false
     catch :halt do
       h = handler.find do |guards, handler, tmp|
         called = true
         val = catch(:pass) do
-          if guarded?(guards, event)
+          if guards.nil? # deleted while executing __method__
+            called = nil # very special case, nothing to call
+          elsif guarded?(guards, event)
             called = false
           else
             begin
@@ -154,7 +156,7 @@ module HasGuardedHandlers
         val
       end
     end
-    !!called
+    called
   end
 
   private
@@ -165,19 +167,23 @@ module HasGuardedHandlers
 
   def delete_handler_if(type, &block) # :nodoc:
     guarded_handlers[type].each_pair do |priority, handlers|
-      handlers.delete_if(&block)
+      handlers.delete_if(&block) # concurrent array mod!?!
     end
   end
 
   def handlers_of_type(type) # :nodoc:
     return unless hash = guarded_handlers[type]
     values = []
-    hash.keys.sort.reverse.each do |key|
-      values += hash[key]
+    keys = hash.keys; keys.sort!; keys.reverse!
+    keys.each do |key|
+      val = hash[key]
+      values.push *val unless val.nil?
     end
     global_handlers = guarded_handlers[nil]
-    global_handlers.keys.sort.reverse.each do |key|
-      values += global_handlers[key]
+    keys = global_handlers.keys; keys.sort!; keys.reverse!
+    keys.each do |key|
+      val = global_handlers[key]
+      values.push *val unless val.nil?
     end
     values
   end
